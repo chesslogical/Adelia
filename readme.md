@@ -1,11 +1,11 @@
-Image Board with Actix Web
+File Upload Board with Actix Web
 
-Extremely small codebase- easy to set up. 
-
-
-![Screenshot 2024-05-27 152435](https://github.com/ChessLogical/Adelia/assets/169053333/2daa914a-0fb9-4175-ae76-d79124136169)
+This is a simple file upload board implemented using Actix Web in Rust. The application allows users to upload image and video files, which are then displayed on the main page. The files are sorted by their modification time, with the latest files appearing at the top.
 
 
+
+
+![Screenshot 2024-05-27 064820](https://github.com/ChessLogical/actix/assets/169053333/8a81e8f7-7dc6-48a5-9d4d-28ab2add862c)
 
 
 

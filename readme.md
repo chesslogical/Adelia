@@ -1,3 +1,7 @@
+
+ADELIA
+
+
 File Upload Board with Actix Web
 
 This is a simple image board implemented using Actix Web in Rust. Super tiny codebase, has features of modern imageboards. 

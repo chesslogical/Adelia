@@ -1,3 +1,4 @@
+
 use actix_files as fs;
 use actix_multipart::Multipart;
 use actix_web::{web, App, HttpResponse, HttpServer, Result};
@@ -139,7 +140,7 @@ async fn view_post(conn: web::Data<Mutex<Connection>>, path: web::Path<i32>) -> 
             margin-bottom: 20px;
         }
         input[type="text"] {
-            width: 100%;
+            width: 50%;
         }
         textarea {
             height: 150px;
@@ -170,12 +171,6 @@ async fn view_post(conn: web::Data<Mutex<Connection>>, path: web::Path<i32>) -> 
         .back-link button:hover {
             background-color: #0056b3;
         }
-        .rules {
-            margin-top: 20px;
-            padding: 10px;
-            background-color: #1e1e1e;
-            border-radius: 5px;
-        }
         button {
             background-color: #007bff;
             color: #ffffff;
@@ -197,22 +192,23 @@ async fn view_post(conn: web::Data<Mutex<Connection>>, path: web::Path<i32>) -> 
             <textarea name="message" maxlength="40000" placeholder="Message" required></textarea><br>
             <input type="file" name="file"><br>
             <button type="submit">Reply</button>
-        </form></div>
-        <div class="rules">
-            <p><strong>Posting Limits and Rules:</strong></p>
-            <ul>
-                <li>Title: Up to 20 characters</li>
-                <li>Message: Up to 40,000 characters</li>
-                <li>File uploads are optional and can be in jpg, jpeg, png, gif, webp, mp4, mp3, or webm formats</li>
-                <li>Please keep discussions respectful and on-topic</li>
-            </ul>
-        </div>"#, post_id),
+        </form></div>"#, post_id),
     );
 
-    for (index, post) in posts.enumerate() {
-        let (_id, post_id, _parent_id, title, message, file_path) = post.unwrap();
-        body.push_str(&format!("<div class=\"post\"><div class=\"post-id\">Reply {}</div>", index + 1));
-        body.push_str(&format!("<div class=\"post-title\">{}</div>", post_id));
+    let mut is_original_post = true;
+    let mut reply_count = 1;
+
+    for post in posts {
+        let (_id, _post_id, _parent_id, title, message, file_path) = post.unwrap();
+        
+        body.push_str("<div class=\"post\">");
+        if is_original_post {
+            body.push_str("<div class=\"post-id\">Original Post</div>");
+            is_original_post = false;
+        } else {
+            body.push_str(&format!("<div class=\"post-id\">Reply {}</div>", reply_count));
+            reply_count += 1;
+        }
         body.push_str(&format!("<div class=\"post-title\">{}</div>", title));
         if let Some(file_path) = file_path {
             if file_path.ends_with(".jpg") || file_path.ends_with(".jpeg") || file_path.ends_with(".png") || file_path.ends_with(".gif") || file_path.ends_with(".webp") {
@@ -266,7 +262,7 @@ async fn index(conn: web::Data<Mutex<Connection>>, query: web::Query<HashMap<Str
             width: 300px;
         }
         input[type="text"] {
-            width: 100%;
+            width: 50%;
         }
         textarea {
             height: 150px;
@@ -288,20 +284,6 @@ async fn index(conn: web::Data<Mutex<Connection>>, query: web::Query<HashMap<Str
             cursor: pointer;
         }
         .reply-button:hover {
-            background-color: #0056b3;
-        }
-        .new-thread-button {
-            display: block;
-            margin: 0 auto 20px auto;
-            padding: 10px 20px;
-            background-color: #007bff;
-            color: #ffffff;
-            border: none;
-            border-radius: 5px;
-            text-align: center;
-            cursor: pointer;
-        }
-        .new-thread-button:hover {
             background-color: #0056b3;
         }
         img, video {
@@ -337,7 +319,17 @@ async fn index(conn: web::Data<Mutex<Connection>>, query: web::Query<HashMap<Str
         }
     "#);
     body.push_str("</style></head><body>");
-    body.push_str(r#"<div class="centered-form"><a href="/new_thread"><button class="new-thread-button">Create New Thread</button></a></div>"#);
+    body.push_str(r#"<div class="centered-form">"#);
+    body.push_str(
+        r#"<form action="/upload" method="post" enctype="multipart/form-data">
+            <input type="hidden" name="parent_id" value="0">
+            <input type="text" name="title" maxlength="20" placeholder="Title" required><br>
+            <textarea name="message" maxlength="40000" placeholder="Message" required></textarea><br>
+            <input type="file" name="file"><br>
+            <button type="submit">Upload</button>
+        </form>"#,
+    );
+    body.push_str(r#"</div>"#);
 
     for post in posts {
         let (id, post_id, title, message, file_path) = post.unwrap();
@@ -371,75 +363,6 @@ async fn index(conn: web::Data<Mutex<Connection>>, query: web::Query<HashMap<Str
     }
     body.push_str(&format!(r#"<a href="/?page={}">Next</a>"#, next_page));
     body.push_str("</div>");
-
-    body.push_str("</body></html>");
-
-    Ok(HttpResponse::Ok().content_type("text/html").body(body))
-}
-
-async fn new_thread() -> Result<HttpResponse> {
-    let mut body = String::new();
-
-    body.push_str("<html><head><title>Create New Thread</title><style>");
-    body.push_str(r#"
-        body {
-            background-color: #121212;
-            color: #FFFFFF;
-            font-family: Arial, sans-serif;
-        }
-        .centered-form {
-            display: flex;
-            justify-content: center;
-            margin-bottom: 20px;
-        }
-        form {
-            display: flex;
-            flex-direction: column;
-            width: 300px;
-        }
-        input[type="text"] {
-            width: 100%;
-        }
-        textarea {
-            height: 150px;
-        }
-        .rules {
-            margin-top: 20px;
-            padding: 10px;
-            background-color: #1e1e1e;
-            border-radius: 5px;
-        }
-        button {
-            background-color: #007bff;
-            color: #ffffff;
-            padding: 10px;
-            border: none;
-            border-radius: 5px;
-            cursor: pointer;
-        }
-        button:hover {
-            background-color: #0056b3;
-        }
-    "#);
-    body.push_str("</style></head><body>");
-    body.push_str(
-        r#"<div class="centered-form"><form action="/upload" method="post" enctype="multipart/form-data">
-            <input type="hidden" name="parent_id" value="0">
-            <input type="text" name="title" maxlength="20" placeholder="Title" required><br>
-            <textarea name="message" maxlength="40000" placeholder="Message" required></textarea><br>
-            <input type="file" name="file"><br>
-            <button type="submit">Create Thread</button>
-        </form></div>
-        <div class="rules">
-            <p><strong>Posting Limits and Rules:</strong></p>
-            <ul>
-                <li>Title: Up to 20 characters</li>
-                <li>Message: Up to 40,000 characters</li>
-                <li>File uploads are optional and can be in jpg, jpeg, png, gif, webp, mp4, mp3, or webm formats</li>
-                <li>Please keep discussions respectful and on-topic</li>
-            </ul>
-        </div>"#,
-    );
 
     body.push_str("</body></html>");
 
@@ -482,10 +405,6 @@ async fn main() -> std::io::Result<()> {
             .service(
                 web::resource("/post/{id}")
                     .route(web::get().to(view_post))
-            )
-            .service(
-                web::resource("/new_thread")
-                    .route(web::get().to(new_thread))
             )
             .service(fs::Files::new("/static", "./static").show_files_listing())
     })

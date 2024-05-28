@@ -1,5 +1,5 @@
 
-ADELIA
+ADELIA is based on Claire, tinyib, tinyboard, vichan, lynxchan, and fchannel. 
 
 
 File Upload Board with Actix Web

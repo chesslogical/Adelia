@@ -4,7 +4,8 @@ ADELIA is based on Claire, tinyib, tinyboard, vichan, lynxchan, and fchannel.
 
 File Upload Board with Actix Web
 
-This is a simple image board implemented using Actix Web in Rust. Super tiny codebase, has features of modern imageboards. 
+This is a simple image board implemented using Actix Web in Rust. Super tiny codebase, has features of modern imageboards. Uses sqlite3 so you do not have to run 
+a seperate instance for each board. 
 
 
 

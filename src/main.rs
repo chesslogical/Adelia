@@ -11,6 +11,16 @@ use actix_web::web::Data;
 use rusqlite::{params, Connection, Result as SqlResult};
 use rand::{distributions::Alphanumeric, Rng};
 use std::collections::hash_map::DefaultHasher;
+use mime_guess::MimeGuess;
+
+// Define the MIME types manually
+const MIME_IMAGE_JPEG: &str = "image/jpeg";
+const MIME_IMAGE_PNG: &str = "image/png";
+const MIME_IMAGE_GIF: &str = "image/gif";
+const MIME_IMAGE_WEBP: &str = "image/webp";
+const MIME_VIDEO_MP4: &str = "video/mp4";
+const MIME_AUDIO_MPEG: &str = "audio/mpeg";
+const MIME_VIDEO_WEBM: &str = "video/webm";
 
 // Maximum file size (20 MB)
 const MAX_SIZE: usize = 20 * 1024 * 1024;
@@ -34,6 +44,10 @@ fn generate_color_from_id(id: &str) -> String {
     let g = ((hash >> 8) & 0xFF) as u8;
     let b = ((hash >> 16) & 0xFF) as u8;
     format!("#{:02X}{:02X}{:02X}", r, g, b)
+}
+
+fn sanitize_input(input: &str) -> String {
+    htmlescape::encode_minimal(input)
 }
 
 async fn save_file(mut payload: Multipart, conn: web::Data<Mutex<Connection>>) -> Result<HttpResponse> {
@@ -62,7 +76,7 @@ async fn save_file(mut payload: Multipart, conn: web::Data<Mutex<Connection>>) -
             },
             "file" => {
                 if let Some(filename) = content_disposition.get_filename() {
-                    let file_extension = filename.split('.').last().unwrap_or("");
+                    let mime_type = MimeGuess::from_path(filename).first_or_octet_stream();
                     let sanitized_filename = sanitize_filename::sanitize(&filename);
                     let unique_id: String = rand::thread_rng()
                         .sample_iter(&Alphanumeric)
@@ -71,10 +85,17 @@ async fn save_file(mut payload: Multipart, conn: web::Data<Mutex<Connection>>) -
                         .collect();
                     let unique_filename = format!("{}-{}", unique_id, sanitized_filename);
 
-                    let valid_image_extensions = ["jpg", "jpeg", "png", "gif", "webp"];
-                    let valid_video_extensions = ["mp4", "mp3", "webm"];
+                    let valid_mime_types = [
+                        MIME_IMAGE_JPEG,
+                        MIME_IMAGE_PNG,
+                        MIME_IMAGE_GIF,
+                        MIME_IMAGE_WEBP,
+                        MIME_VIDEO_MP4,
+                        MIME_AUDIO_MPEG,
+                        MIME_VIDEO_WEBM,
+                    ];
 
-                    if valid_image_extensions.contains(&file_extension) || valid_video_extensions.contains(&file_extension) {
+                    if valid_mime_types.contains(&mime_type.as_ref()) {
                         let file_path_string = format!("./static/{}", unique_filename);
                         let file_path_clone = file_path_string.clone();
                         let mut f = web::block(move || std::fs::File::create(file_path_clone)).await??;
@@ -98,6 +119,9 @@ async fn save_file(mut payload: Multipart, conn: web::Data<Mutex<Connection>>) -
         }
     }
 
+    let title = sanitize_input(&title);
+    let message = sanitize_input(&message);
+
     if title.trim().is_empty() || message.trim().is_empty() {
         return Ok(HttpResponse::BadRequest().body("Title and message are mandatory."));
     }
@@ -113,22 +137,25 @@ async fn save_file(mut payload: Multipart, conn: web::Data<Mutex<Connection>>) -
         .collect();
 
     let conn = conn.lock().unwrap();
-    conn.execute(
+    match conn.execute(
         "INSERT INTO files (post_id, parent_id, title, message, file_path) VALUES (?1, ?2, ?3, ?4, ?5)",
         params![post_id, parent_id, title, message, file_path],
-    ).unwrap();
+    ) {
+        Ok(_) => {
+            if parent_id != 0 {
+                conn.execute(
+                    "UPDATE files SET last_reply_at = CURRENT_TIMESTAMP WHERE id = ?1 OR parent_id = ?1",
+                    params![parent_id],
+                ).unwrap();
+            }
 
-    if parent_id != 0 {
-        conn.execute(
-            "UPDATE files SET last_reply_at = CURRENT_TIMESTAMP WHERE id = ?1 OR parent_id = ?1",
-            params![parent_id],
-        ).unwrap();
-    }
-
-    if parent_id == 0 {
-        Ok(HttpResponse::SeeOther().append_header(("Location", "/")).finish())
-    } else {
-        Ok(HttpResponse::SeeOther().append_header(("Location", format!("/post/{}", parent_id))).finish())
+            if parent_id == 0 {
+                Ok(HttpResponse::SeeOther().append_header(("Location", "/")).finish())
+            } else {
+                Ok(HttpResponse::SeeOther().append_header(("Location", format!("/post/{}", parent_id))).finish())
+            }
+        },
+        Err(e) => Ok(HttpResponse::InternalServerError().body(format!("Database error: {}", e))),
     }
 }
 
@@ -189,6 +216,17 @@ async fn index(conn: web::Data<Mutex<Connection>>, query: web::Query<HashMap<Str
     let page: usize = query.get("page").and_then(|p| p.parse().ok()).unwrap_or(1);
     let offset = (page - 1) * POSTS_PER_PAGE;
 
+    // Get the total number of posts
+    let total_posts: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM files WHERE parent_id = 0",
+        [],
+        |row| row.get(0),
+    ).unwrap_or(0);
+
+    // Determine if there is a next page
+    let total_pages = (total_posts as f64 / POSTS_PER_PAGE as f64).ceil() as usize;
+    let has_next_page = page < total_pages;
+
     let mut stmt = conn.prepare("SELECT id, post_id, title, message, file_path FROM files WHERE parent_id = 0 ORDER BY last_reply_at DESC LIMIT ?1 OFFSET ?2").unwrap();
     let posts = stmt.query_map(params![POSTS_PER_PAGE as i64, offset as i64], |row| {
         Ok((
@@ -234,13 +272,15 @@ async fn index(conn: web::Data<Mutex<Connection>>, query: web::Query<HashMap<Str
         posts_html.push_str("</div>");
     }
 
-    let next_page = page + 1;
-    let prev_page = if page > 1 { page - 1 } else { 1 };
+    let next_page = if has_next_page { Some(page + 1) } else { None };
+    let prev_page = if page > 1 { Some(page - 1) } else { None };
     let mut pagination_html = String::new();
-    if page > 1 {
-        pagination_html.push_str(&format!(r#"<a href="/?page={}">Previous</a>"#, prev_page));
+    if let Some(prev) = prev_page {
+        pagination_html.push_str(&format!(r#"<a href="/?page={}">Previous</a>"#, prev));
     }
-    pagination_html.push_str(&format!(r#"<a href="/?page={}">Next</a>"#, next_page));
+    if let Some(next) = next_page {
+        pagination_html.push_str(&format!(r#"<a href="/?page={}">Next</a>"#, next));
+    }
 
     let context = HashMap::from([
         ("POSTS", posts_html),

@@ -19,7 +19,7 @@ TLDR-- Sqlite3 is decent, but it holds rust back. SO if you MUST use sqlite3 jus
 //////////////////////////////////////////////////////////////////////////////////////////////////
 
 
-The message board application is a web-based platform designed to support around 100 individual boards, each dedicated to different topics or themes. Users can interact with these boards by creating new threads, posting messages, replying to existing posts, and uploading files such as images, videos, or documents.
+Adelia is a web-based platform designed to support around 100 individual boards, each dedicated to different topics or themes. Users can interact with these boards by creating new threads, posting messages, replying to existing posts, and uploading files such as images, videos, or documents.
 
 Core Features
 Multiple Boards: The application hosts multiple boards, each identified by a unique ID (e.g., /1, /2, etc.). Each board serves as a separate discussion space where users can post and view messages related to the board's specific topic.

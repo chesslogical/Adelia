@@ -13,7 +13,7 @@ ADELIA is based on Claire, tinyib, tinyboard, vichan, lynxchan, and fchannel.
 
 
 
-TLDR-- Sqlite3 is decent, but it holds rust back. SO if you MUST use sqlite3 just feed this code to chatgpt and tall iw what you need changed or edit to suit your needs. This a valuable learning tool or a starting point to make your own rust imageboard. I do not plan any further updates for this because sqlite3 and even sleddb holds rust back in terms of what rust is capable of. 
+TLDR-- Sqlite3 is decent, but it holds rust back. SO if you MUST use sqlite3 just feed this code to chatgpt and tell iw what you need changed or edit to suit your needs. This a valuable learning tool or a starting point to make your own rust imageboard. I do not plan any further updates for this because sqlite3 and even sleddb holds rust back in terms of what rust is capable of. 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 //////////////////////////////////////////////////////////////////////////////////////////////////

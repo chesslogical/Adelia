@@ -11,10 +11,12 @@ ADELIA is based on Claire, tinyib, tinyboard, vichan, lynxchan, and fchannel.
 
 
 
-update!!!!!!!!!!!!!!!!
+
 //////////////////////////////////////////////////////////////////////////////////////////////////
 TLDR-- Sqlite3 is decent, but it holds rust back. SO if you MUST use sqlite3 just feed this code to chatgpt and tall iw what you need changed or edit to suit your needs. This a valuable learning tool or a starting point to make your own rust imageboard. I do not plan any further updates for this because sqlite3 and even sleddb holds rust back in terms of what rust is capable of. 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+
 The message board application is a web-based platform designed to support around 100 individual boards, each dedicated to different topics or themes. Users can interact with these boards by creating new threads, posting messages, replying to existing posts, and uploading files such as images, videos, or documents.
 
 Core Features

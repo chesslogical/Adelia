@@ -50,7 +50,11 @@ fn sanitize_input(input: &str) -> String {
     htmlescape::encode_minimal(input)
 }
 
-async fn save_file(mut payload: Multipart, conn: web::Data<Mutex<Connection>>) -> Result<HttpResponse> {
+async fn save_file(
+    mut payload: Multipart,
+    conn: web::Data<Mutex<Connection>>,
+    board_id: web::Path<i32>,
+) -> Result<HttpResponse> {
     let mut title = String::new();
     let mut message = String::new();
     let mut file_path = None;
@@ -67,13 +71,13 @@ async fn save_file(mut payload: Multipart, conn: web::Data<Mutex<Connection>>) -
                     let data = chunk?;
                     title.push_str(&String::from_utf8_lossy(&data));
                 }
-            },
+            }
             "message" => {
                 while let Some(chunk) = field.next().await {
                     let data = chunk?;
                     message.push_str(&String::from_utf8_lossy(&data));
                 }
-            },
+            }
             "file" => {
                 if let Some(filename) = content_disposition.get_filename() {
                     let mime_type = MimeGuess::from_path(filename).first_or_octet_stream();
@@ -98,7 +102,8 @@ async fn save_file(mut payload: Multipart, conn: web::Data<Mutex<Connection>>) -
                     if valid_mime_types.contains(&mime_type.as_ref()) {
                         let file_path_string = format!("./static/{}", unique_filename);
                         let file_path_clone = file_path_string.clone();
-                        let mut f = web::block(move || std::fs::File::create(file_path_clone)).await??;
+                        let mut f =
+                            web::block(move || std::fs::File::create(file_path_clone)).await??;
 
                         while let Some(chunk) = field.next().await {
                             let data = chunk?;
@@ -108,14 +113,14 @@ async fn save_file(mut payload: Multipart, conn: web::Data<Mutex<Connection>>) -
                         file_path = Some(file_path_string);
                     }
                 }
-            },
+            }
             "parent_id" => {
                 while let Some(chunk) = field.next().await {
                     let data = chunk?;
                     parent_id = String::from_utf8_lossy(&data).trim().parse().unwrap_or(0);
                 }
-            },
-            _ => {},
+            }
+            _ => {}
         }
     }
 
@@ -138,42 +143,52 @@ async fn save_file(mut payload: Multipart, conn: web::Data<Mutex<Connection>>) -
 
     let conn = conn.lock().unwrap();
     match conn.execute(
-        "INSERT INTO files (post_id, parent_id, title, message, file_path) VALUES (?1, ?2, ?3, ?4, ?5)",
-        params![post_id, parent_id, title, message, file_path],
+        "INSERT INTO files (post_id, parent_id, title, message, file_path, board_id) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+        params![post_id, parent_id, title, message, file_path, *board_id],
     ) {
         Ok(_) => {
             if parent_id != 0 {
                 conn.execute(
                     "UPDATE files SET last_reply_at = CURRENT_TIMESTAMP WHERE id = ?1 OR parent_id = ?1",
                     params![parent_id],
-                ).unwrap();
+                )
+                .unwrap();
             }
 
             if parent_id == 0 {
-                Ok(HttpResponse::SeeOther().append_header(("Location", "/")).finish())
+                Ok(HttpResponse::SeeOther().append_header(("Location", format!("/{}", board_id))).finish())
             } else {
-                Ok(HttpResponse::SeeOther().append_header(("Location", format!("/post/{}", parent_id))).finish())
+                Ok(HttpResponse::SeeOther().append_header(("Location", format!("/{}/post/{}", board_id, parent_id))).finish())
             }
-        },
+        }
         Err(e) => Ok(HttpResponse::InternalServerError().body(format!("Database error: {}", e))),
     }
 }
 
-async fn view_post(conn: web::Data<Mutex<Connection>>, path: web::Path<i32>) -> Result<HttpResponse> {
+async fn view_post(
+    conn: web::Data<Mutex<Connection>>,
+    path: web::Path<(i32, i32)>,
+) -> Result<HttpResponse> {
     let conn = conn.lock().unwrap();
-    let post_id = path.into_inner();
+    let (board_id, post_id) = path.into_inner();
 
-    let mut stmt = conn.prepare("SELECT id, post_id, parent_id, title, message, file_path FROM files WHERE id = ?1 OR parent_id = ?1 ORDER BY id ASC").unwrap();
-    let posts = stmt.query_map(params![post_id], |row| {
-        Ok((
-            row.get::<_, i32>(0)?,
-            row.get::<_, String>(1)?,
-            row.get::<_, i32>(2)?,
-            row.get::<_, String>(3)?,
-            row.get::<_, String>(4)?,
-            row.get::<_, Option<String>>(5)?,
-        ))
-    }).unwrap();
+    let mut stmt = conn
+        .prepare(
+            "SELECT id, post_id, parent_id, title, message, file_path FROM files WHERE (id = ?1 OR parent_id = ?1) AND board_id = ?2 ORDER BY id ASC",
+        )
+        .unwrap();
+    let posts = stmt
+        .query_map(params![post_id, board_id], |row| {
+            Ok((
+                row.get::<_, i32>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, i32>(2)?,
+                row.get::<_, String>(3)?,
+                row.get::<_, String>(4)?,
+                row.get::<_, Option<String>>(5)?,
+            ))
+        })
+        .unwrap();
 
     let mut posts_html = String::new();
     let mut is_original_post = true;
@@ -191,10 +206,24 @@ async fn view_post(conn: web::Data<Mutex<Connection>>, path: web::Path<i32>) -> 
         }
         posts_html.push_str(&format!("<div class=\"post-title\">{}</div>", title));
         if let Some(file_path) = file_path {
-            if file_path.ends_with(".jpg") || file_path.ends_with(".jpeg") || file_path.ends_with(".png") || file_path.ends_with(".gif") || file_path.ends_with(".webp") {
-                posts_html.push_str(&format!(r#"<img src="/static/{}"><br>"#, file_path.trim_start_matches("./static/")));
-            } else if file_path.ends_with(".mp4") || file_path.ends_with(".mp3") || file_path.ends_with(".webm") {
-                posts_html.push_str(&format!(r#"<video controls><source src="/static/{}"></video><br>"#, file_path.trim_start_matches("./static/")));
+            if file_path.ends_with(".jpg")
+                || file_path.ends_with(".jpeg")
+                || file_path.ends_with(".png")
+                || file_path.ends_with(".gif")
+                || file_path.ends_with(".webp")
+            {
+                posts_html.push_str(&format!(
+                    r#"<img src="/static/{}"><br>"#,
+                    file_path.trim_start_matches("./static/")
+                ));
+            } else if file_path.ends_with(".mp4")
+                || file_path.ends_with(".mp3")
+                || file_path.ends_with(".webm")
+            {
+                posts_html.push_str(&format!(
+                    r#"<video controls><source src="/static/{}"></video><br>"#,
+                    file_path.trim_start_matches("./static/")
+                ));
             }
         }
         posts_html.push_str(&format!("<div class=\"post-message\">{}</div>", message));
@@ -204,6 +233,7 @@ async fn view_post(conn: web::Data<Mutex<Connection>>, path: web::Path<i32>) -> 
     let context = HashMap::from([
         ("PARENT_ID", post_id.to_string()),
         ("POSTS", posts_html),
+        ("BOARD_ID", board_id.to_string()),
     ]);
 
     let body = render_template("templates/view_post.html", &context);
@@ -211,15 +241,20 @@ async fn view_post(conn: web::Data<Mutex<Connection>>, path: web::Path<i32>) -> 
     Ok(HttpResponse::Ok().content_type("text/html").body(body))
 }
 
-async fn index(conn: web::Data<Mutex<Connection>>, query: web::Query<HashMap<String, String>>) -> Result<HttpResponse> {
+
+async fn board(
+    conn: web::Data<Mutex<Connection>>,
+    board_id: web::Path<i32>,
+    query: web::Query<HashMap<String, String>>,
+) -> Result<HttpResponse> {
     let conn = conn.lock().unwrap();
     let page: usize = query.get("page").and_then(|p| p.parse().ok()).unwrap_or(1);
     let offset = (page - 1) * POSTS_PER_PAGE;
 
     // Get the total number of posts
     let total_posts: i64 = conn.query_row(
-        "SELECT COUNT(*) FROM files WHERE parent_id = 0",
-        [],
+        "SELECT COUNT(*) FROM files WHERE parent_id = 0 AND board_id = ?1",
+        params![*board_id],
         |row| row.get(0),
     ).unwrap_or(0);
 
@@ -227,8 +262,10 @@ async fn index(conn: web::Data<Mutex<Connection>>, query: web::Query<HashMap<Str
     let total_pages = (total_posts as f64 / POSTS_PER_PAGE as f64).ceil() as usize;
     let has_next_page = page < total_pages;
 
-    let mut stmt = conn.prepare("SELECT id, post_id, title, message, file_path FROM files WHERE parent_id = 0 ORDER BY last_reply_at DESC LIMIT ?1 OFFSET ?2").unwrap();
-    let posts = stmt.query_map(params![POSTS_PER_PAGE as i64, offset as i64], |row| {
+    let mut stmt = conn.prepare(
+        "SELECT id, post_id, title, message, file_path FROM files WHERE parent_id = 0 AND board_id = ?1 ORDER BY last_reply_at DESC LIMIT ?2 OFFSET ?3",
+    ).unwrap();
+    let posts = stmt.query_map(params![*board_id, POSTS_PER_PAGE as i64, offset as i64], |row| {
         Ok((
             row.get::<_, i32>(0)?,
             row.get::<_, String>(1)?,
@@ -250,7 +287,12 @@ async fn index(conn: web::Data<Mutex<Connection>>, query: web::Query<HashMap<Str
         ).unwrap_or(0);
 
         let truncated_message = if message.len() > 2700 {
-            format!("{}... <a href=\"/post/{}\" class=\"view-full-post\">Click here to open full post</a>", &message[..2700], id)
+            format!(
+                "{}... <a href=\"/{}/post/{}\" class=\"view-full-post\">Click here to open full post</a>",
+                &message[..2700],
+                *board_id,
+                id
+            )
         } else {
             message.clone()
         };
@@ -258,17 +300,40 @@ async fn index(conn: web::Data<Mutex<Connection>>, query: web::Query<HashMap<Str
         let post_color = generate_color_from_id(&post_id);
 
         posts_html.push_str("<div class=\"post\">");
-        posts_html.push_str(&format!("<div class=\"post-id-box\" style=\"background-color: {}\">{}</div>", post_color, post_id));
-        posts_html.push_str(&format!("<div class=\"post-title title-green\">{}</div>", title));
+        posts_html.push_str(&format!(
+            "<div class=\"post-id-box\" style=\"background-color: {}\">{}</div>",
+            post_color, post_id
+        ));
+        posts_html.push_str(&format!(
+            "<div class=\"post-title title-green\">{}</div>",
+            title
+        ));
         if let Some(file_path) = file_path {
-            if file_path.ends_with(".jpg") || file_path.ends_with(".jpeg") || file_path.ends_with(".png") || file_path.ends_with(".gif") || file_path.ends_with(".webp") {
-                posts_html.push_str(&format!(r#"<img src="/static/{}"><br>"#, file_path.trim_start_matches("./static/")));
-            } else if file_path.ends_with(".mp4") || file_path.ends_with(".mp3") || file_path.ends_with(".webm") {
-                posts_html.push_str(&format!(r#"<video controls><source src="/static/{}"></video><br>"#, file_path.trim_start_matches("./static/")));
+            if file_path.ends_with(".jpg")
+                || file_path.ends_with(".jpeg")
+                || file_path.ends_with(".png")
+                || file_path.ends_with(".gif")
+                || file_path.ends_with(".webp")
+            {
+                posts_html.push_str(&format!(
+                    r#"<img src="/static/{}"><br>"#,
+                    file_path.trim_start_matches("./static/")
+                ));
+            } else if file_path.ends_with(".mp4")
+                || file_path.ends_with(".mp3")
+                || file_path.ends_with(".webm")
+            {
+                posts_html.push_str(&format!(
+                    r#"<video controls><source src="/static/{}"></video><br>"#,
+                    file_path.trim_start_matches("./static/")
+                ));
             }
         }
         posts_html.push_str(&format!("<div class=\"post-message\">{}</div>", truncated_message));
-        posts_html.push_str(&format!("<a class=\"reply-button\" href=\"/post/{}\">Reply ({})</a>", id, reply_count));
+        posts_html.push_str(&format!(
+            "<a class=\"reply-button\" href=\"/{}/post/{}\">Reply ({})</a>",
+            *board_id, id, reply_count
+        ));
         posts_html.push_str("</div>");
     }
 
@@ -276,18 +341,19 @@ async fn index(conn: web::Data<Mutex<Connection>>, query: web::Query<HashMap<Str
     let prev_page = if page > 1 { Some(page - 1) } else { None };
     let mut pagination_html = String::new();
     if let Some(prev) = prev_page {
-        pagination_html.push_str(&format!(r#"<a href="/?page={}">Previous</a>"#, prev));
+        pagination_html.push_str(&format!(r#"<a href="/{}?page={}">Previous</a>"#, board_id, prev));
     }
     if let Some(next) = next_page {
-        pagination_html.push_str(&format!(r#"<a href="/?page={}">Next</a>"#, next));
+        pagination_html.push_str(&format!(r#"<a href="/{}?page={}">Next</a>"#, board_id, next));
     }
 
     let context = HashMap::from([
         ("POSTS", posts_html),
         ("PAGINATION", pagination_html),
+        ("BOARD_ID", board_id.to_string()),
     ]);
 
-    let body = render_template("templates/index.html", &context);
+    let body = render_template("templates/board.html", &context);
 
     Ok(HttpResponse::Ok().content_type("text/html").body(body))
 }
@@ -302,6 +368,7 @@ fn initialize_db() -> SqlResult<Connection> {
             title TEXT NOT NULL,
             message TEXT NOT NULL,
             file_path TEXT,
+            board_id INTEGER NOT NULL,
             last_reply_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )",
         [],
@@ -320,19 +387,25 @@ async fn main() -> std::io::Result<()> {
             .app_data(Data::new(web::JsonConfig::default().limit(MAX_SIZE)))
             .service(
                 web::resource("/")
-                    .route(web::get().to(index))
+                    .route(web::get().to(|| async { 
+                        fs::NamedFile::open_async("./static/index.html").await.unwrap()
+                    }))
             )
             .service(
-                web::resource("/upload")
+                web::resource("/{board_id}")
+                    .route(web::get().to(board))
+            )
+            .service(
+                web::resource("/{board_id}/upload")
                     .route(web::post().to(save_file))
             )
             .service(
-                web::resource("/post/{id}")
+                web::resource("/{board_id}/post/{id}")
                     .route(web::get().to(view_post))
             )
             .service(fs::Files::new("/static", "./static").show_files_listing())
     })
-    .bind("0.0.0.0:8080")?
+    .bind("0.0.0.0:8082")?
     .run()
     .await
 }
